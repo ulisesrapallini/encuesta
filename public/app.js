@@ -1,5 +1,8 @@
+
 (function(){
-  const questions = [
+  // questions will be loaded from public/questions.json. a small embedded fallback is kept.
+  let questions = [];
+  const fallbackQuestions = [
     { id: 'intro', text: 'Hola. Gracias por participar. Esta entrevista busca entender cómo las personas ciegas interactúan con navegadores web y tecnologías de asistencia. Durará aproximadamente 20 minutos. ¿Desea comenzar?' },
     { id: 'datos_edad', text: '¿Podría contarnos brevemente su edad aproximada y a qué se dedica actualmente?' },
     { id: 'discapacidad', text: '¿Su discapacidad visual es total o tiene algún grado de visión residual?' },
@@ -69,6 +72,23 @@
     { id: 'cierre', text: 'Muchas gracias por su participación. ¿Desea añadir algún comentario final?' }
   ];
 
+  async function loadQuestions(){
+    try{
+      const res = await fetch('/questions.json', {cache: 'no-store'});
+      if(res.ok){
+        const data = await res.json();
+        if(Array.isArray(data) && data.length>0){
+          questions = data;
+          return;
+        }
+      }
+    }catch(e){
+      console.warn('No se pudo cargar questions.json, usando fallback', e);
+    }
+    questions = fallbackQuestions;
+  }
+
+
   const startBtn = document.getElementById('startBtn');
   const repeatBtn = document.getElementById('repeatBtn');
   const skipBtn = document.getElementById('skipBtn');
@@ -78,6 +98,7 @@
   let idx = 0;
   let responses = {};
   let lastQuestion = null;
+  let paused = false;
 
   function appendLog(label, text){
     const d = document.createElement('div');
@@ -86,36 +107,237 @@
     log.scrollTop = log.scrollHeight;
   }
 
-  function selectSpanishFemaleVoice(){
-    const voices = speechSynthesis.getVoices();
-    if(!voices || voices.length === 0) return null;
-    // prefer Spanish female-like voices by heuristics, fallback to first Spanish voice
-    const femaleHint = /female|femenina|maria|sofia|soledad|luc[aí]a|isabel|isabela|google español|spanish m/i;
-    let v = voices.find(v=>v.lang && v.lang.startsWith('es') && femaleHint.test(v.name));
-    if(!v) v = voices.find(v=>v.lang && v.lang.startsWith('es'));
-    if(!v) v = voices[0];
-    return v;
+  // preferredVoice will be set once voices are available
+  let preferredVoice = null;
+  let availableVoices = [];
+  // TTS settings (can be adjusted from UI)
+  let ttsRate = 0.95;
+  let ttsPitch = 1.12;
+
+  function loadVoices(){
+    const voices = speechSynthesis.getVoices() || [];
+    if(!voices.length) return;
+    availableVoices = voices;
+    // stronger heuristics for a pleasant female Spanish voice
+    const femalePatterns = [
+      /female|femenina|mujer|maria|sofia|soledad|luc[aí]a|isabel|isabela|ana/i,
+      /google.*es|español.*google|spanish.*google/i,
+      /spanish.*female|es-.*female/i
+    ];
+    // prefer same-language Spanish voices (es-*) and matching female hints
+    preferredVoice = voices.find(v => {
+      if(!v.lang || !v.lang.startsWith('es')) return false;
+      return femalePatterns.some(rx => rx.test(v.name || ''));
+    });
+    // fallback: any Spanish voice
+    if(!preferredVoice) preferredVoice = voices.find(v => v.lang && v.lang.startsWith('es'));
+    // final fallback: first voice available
+    if(!preferredVoice && voices.length) preferredVoice = voices[0];
+    // populate voice select UI if present
+    populateVoiceSelect();
+  }
+
+  // try to load voices now and when they change
+  try{ loadVoices(); }catch(e){}
+  speechSynthesis.onvoiceschanged = loadVoices;
+
+  // populate controls when DOM ready
+  document.addEventListener('DOMContentLoaded', ()=>{
+    populateVoiceSelect();
+    populateTTSControls();
+    // load questions file
+    loadQuestions().then(()=>{
+      appendLog('Info','Preguntas cargadas: ' + questions.length);
+    }).catch((e)=>{ appendLog('Error','No se pudieron cargar las preguntas'); });
+  });
+
+  function populateVoiceSelect(){
+    const sel = document.getElementById('voiceSelect');
+    if(!sel) return;
+    // Clear existing options
+    sel.innerHTML = '';
+    availableVoices.forEach((v, i)=>{
+      const opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = `${v.name} (${v.lang})`;
+      sel.appendChild(opt);
+    });
+    // try to restore saved choice
+    const saved = localStorage.getItem('preferredVoiceName');
+    let selectedIndex = 0;
+    if(saved){
+      const idx = availableVoices.findIndex(v=>v.name === saved);
+      if(idx >= 0) selectedIndex = idx;
+    } else if(preferredVoice){
+      const idx = availableVoices.findIndex(v=>v.name === preferredVoice.name);
+      if(idx >= 0) selectedIndex = idx;
+    }
+    sel.selectedIndex = selectedIndex;
+    // set preferredVoice accordingly
+    preferredVoice = availableVoices[selectedIndex] || preferredVoice;
+
+    sel.addEventListener('change', ()=>{
+      const idx = parseInt(sel.value, 10);
+      if(!isNaN(idx) && availableVoices[idx]){
+        preferredVoice = availableVoices[idx];
+        try{ localStorage.setItem('preferredVoiceName', preferredVoice.name); }catch(e){}
+      }
+    });
+  }
+
+  function populateTTSControls(){
+    const rateRange = document.getElementById('rateRange');
+    const pitchRange = document.getElementById('pitchRange');
+    const rateValue = document.getElementById('rateValue');
+    const pitchValue = document.getElementById('pitchValue');
+    if(!rateRange || !pitchRange) return;
+    // restore saved
+    try{
+      const savedRate = parseFloat(localStorage.getItem('ttsRate'));
+      const savedPitch = parseFloat(localStorage.getItem('ttsPitch'));
+      if(!isNaN(savedRate)) ttsRate = savedRate;
+      if(!isNaN(savedPitch)) ttsPitch = savedPitch;
+    }catch(e){}
+    rateRange.value = ttsRate;
+    pitchRange.value = ttsPitch;
+    rateValue.textContent = ttsRate;
+    pitchValue.textContent = ttsPitch;
+
+    rateRange.addEventListener('input', ()=>{
+      ttsRate = parseFloat(rateRange.value);
+      rateValue.textContent = ttsRate.toFixed(2);
+      try{ localStorage.setItem('ttsRate', String(ttsRate)); }catch(e){}
+    });
+    pitchRange.addEventListener('input', ()=>{
+      ttsPitch = parseFloat(pitchRange.value);
+      pitchValue.textContent = ttsPitch.toFixed(2);
+      try{ localStorage.setItem('ttsPitch', String(ttsPitch)); }catch(e){}
+    });
   }
 
   function speak(text, cb, opts){
     status.textContent = text;
     const ut = new SpeechSynthesisUtterance(text);
-    ut.lang = (opts && opts.lang) || 'es-AR';
-    ut.rate = (opts && opts.rate) || 1.0;
-    ut.pitch = (opts && opts.pitch) || 1.05;
-    // try to pick a Spanish female voice when available
-    const voice = selectSpanishFemaleVoice();
-    if(voice) ut.voice = voice;
+    // prefer a clear, slightly slower and warm female voice
+    ut.lang = (opts && opts.lang) || 'es-ES';
+    // allow UI-controlled rate/pitch to override defaults
+    ut.rate = (opts && opts.rate) || ttsRate || 0.95;
+    ut.pitch = (opts && opts.pitch) || ttsPitch || 1.12;
+    // use locked preferredVoice if available, otherwise try to select one now
+    if(preferredVoice) ut.voice = preferredVoice;
+    else {
+      try{ loadVoices(); }catch(e){}
+      if(preferredVoice) ut.voice = preferredVoice;
+    }
     ut.onend = () => { if(cb) cb(); };
-    // ensure voices are loaded (some browsers require getVoices to be called earlier)
     try{ speechSynthesis.cancel(); }catch(e){}
     speechSynthesis.speak(ut);
+  }
+
+  // soft beep for microphone start/stop using WebAudio
+  function playBeep(kind){
+    try{
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.connect(g); g.connect(ctx.destination);
+      const now = ctx.currentTime;
+      // tuned beeps: start = slightly higher, short and soft; stop = lower, slightly longer
+      if(kind === 'start'){
+        o.frequency.setValueAtTime(1200, now); // higher pitch for start
+        g.gain.setValueAtTime(0.0001, now);
+        g.gain.exponentialRampToValueAtTime(0.06, now + 0.012);
+        o.start(now);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+        o.stop(now + 0.19);
+      } else {
+        o.frequency.setValueAtTime(600, now); // lower pitch for stop
+        g.gain.setValueAtTime(0.0001, now);
+        g.gain.exponentialRampToValueAtTime(0.05, now + 0.02);
+        o.start(now);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+        o.stop(now + 0.29);
+      }
+      // close context after short delay to release resources
+      setTimeout(()=>{ try{ ctx.close(); }catch(e){} }, 500);
+    }catch(e){ /* ignore audio errors */ }
+  }
+
+  function pauseInterview(){
+    paused = true;
+    // announce pause and wait for resume command
+    speak('Entrevista pausada. Diga «reanudar entrevista» cuando desee continuar.', ()=>{
+      // listen for resume
+      function waitResume(){
+        listenOnce((res)=>{
+          const txt = (res||'').toLowerCase();
+          if(txt.includes('reanudar') || txt.includes('continuar') || txt.includes('iniciar') || txt.includes('comenzar')){
+            resumeInterview();
+          } else {
+            // keep waiting
+            waitResume();
+          }
+        }, (err)=>{
+          // on error, try again
+          waitResume();
+        });
+      }
+      waitResume();
+    });
+  }
+
+  function resumeInterview(){
+    paused = false;
+    speak('Reanudando la entrevista.', ()=>{
+      // continue with current question
+      setTimeout(askCurrent, 200);
+    });
   }
 
   function listenOnce(onResult, onError){
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if(!SpeechRecognition){
-      onError && onError(new Error('SpeechRecognition no soportado'));
+      // Fallback: show keyboard/text input modal
+      appendLog('Info','SpeechRecognition no soportado, usando entrada de teclado');
+      // play activation beep
+      playBeep('start');
+      const modal = document.getElementById('fallbackModal');
+      const input = document.getElementById('fallbackInput');
+      const submit = document.getElementById('fallbackSubmit');
+      const cancel = document.getElementById('fallbackCancel');
+      modal.setAttribute('aria-hidden','false');
+      modal.style.display = 'flex';
+      input.value = '';
+      setTimeout(()=>{ input.focus(); }, 50);
+
+      function cleanup(){
+        modal.setAttribute('aria-hidden','true');
+        modal.style.display = 'none';
+        submit.removeEventListener('click', onSubmit);
+        cancel.removeEventListener('click', onCancel);
+      }
+
+      function onSubmit(){
+        const val = input.value.trim();
+        cleanup();
+        playBeep('stop');
+        if(val.length===0){
+          onError && onError(new Error('No se ingresó texto'));
+        } else {
+          onResult && onResult(val);
+        }
+      }
+      function onCancel(){
+        cleanup();
+        playBeep('stop');
+        onError && onError(new Error('Cancelado por usuario'));
+      }
+
+      submit.addEventListener('click', onSubmit);
+      cancel.addEventListener('click', onCancel);
+      input.addEventListener('keydown', function ke(e){ if(e.key === 'Enter'){ onSubmit(); input.removeEventListener('keydown', ke); } });
       return;
     }
     const recog = new SpeechRecognition();
@@ -124,9 +346,13 @@
     recog.maxAlternatives = 1;
     recog.onresult = (e)=>{
       const text = e.results[0][0].transcript.trim();
+      try{ playBeep('stop'); }catch(e){}
       onResult && onResult(text);
     };
-    recog.onerror = (e)=>{ onError && onError(e); };
+    recog.onerror = (e)=>{ try{ playBeep('stop'); }catch(err){} onError && onError(e); };
+    recog.onend = ()=>{ try{ playBeep('stop'); }catch(e){} };
+    // play activation beep then start recognition
+    try{ playBeep('start'); }catch(e){}
     recog.start();
   }
 
@@ -140,7 +366,11 @@
     // Ask the question, then listen for answer. Support 'repetir' during answer to replay the question.
     speak(q.text, ()=>{
       listenOnce((answer)=>{
-        const low = answer.toLowerCase();
+        const low = (answer||'').toLowerCase();
+        if(low.includes('pausar')){
+          pauseInterview();
+          return;
+        }
         if(low.includes('repetir')){
           // user asked to repeat the question
           appendLog('Comando', 'Repetir última pregunta');
@@ -153,6 +383,10 @@
         speak('Usted dijo: ' + answer + '. ¿Es correcto?', ()=>{
           listenOnce((conf)=>{
             const c = (conf || '').toLowerCase();
+            if(c.includes('pausar')){
+              pauseInterview();
+              return;
+            }
             if(c.includes('no')){
               // repeat answer
               speak('De acuerdo, repita por favor la respuesta.', ()=>{
@@ -197,18 +431,21 @@
   }
 
   startBtn.addEventListener('click', ()=>{
-    idx = 0; responses = {}; log.innerHTML = '';
+    // start after the spoken intro question so the intro sentence is only said once
+    idx = 1; responses = {}; log.innerHTML = '';
     // welcome + explain commands (female, agradable)
-    const intro1 = 'Hola. Gracias por participar. Esta entrevista busca entender cómo las personas ciegas interactúan con navegadores web y tecnologías de asistencia. Durará aproximadamente veinte minutos.';
+    const intro1 = 'Hola. Gracias por participar. Esta entrevista busca entender cómo las personas ciegas interactúan con navegadores web y tecnologías de asistencia. Durará aproximadamente 20 minutos. ¿Desea comenzar?';
     const commands = 'Puede utilizar los siguientes comandos por voz: Diga «iniciar entrevista» cuando esté listo para iniciarla. Diga «repetir última pregunta» cuando quiera volver a escuchar la pregunta. Para confirmar una respuesta, cuando le pregunte «¿Es correcto?», responda «correcto», «sí» o «no». Si dice «no», podrá repetir su respuesta.';
     // speak intro and commands with a pleasant female voice and slightly higher pitch
     speak(intro1, ()=>{
       speak(commands, ()=>{
         // ask user to say 'iniciar entrevista' to begin
-        speak('Diga iniciar entrevista cuando esté listo para comenzar.', ()=>{
+        speak('Diga iniciar entrevista cuando esté listo para comenzar. También puede decir pausar entrevista para detenerla temporalmente.', ()=>{
           listenOnce((cmd)=>{
             const c = (cmd||'').toLowerCase();
-            if(c.includes('iniciar')){
+            if(c.includes('pausar')){
+              pauseInterview();
+            } else if(c.includes('iniciar') || c.includes('reanudar') || c.includes('comenzar')){
               speak('Perfecto. Comenzamos ahora.', ()=>{ askCurrent(); });
             } else if(c.includes('repetir')){
               speak('Repito la instrucción. ' + commands, ()=>{ /* then wait once more or start */ askCurrent(); });
