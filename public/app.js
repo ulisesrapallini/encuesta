@@ -112,10 +112,79 @@
     speechSynthesis.speak(ut);
   }
 
+  // soft beep for microphone start/stop using WebAudio
+  function playBeep(kind){
+    try{
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.connect(g); g.connect(ctx.destination);
+      const now = ctx.currentTime;
+      // tuned beeps: start = slightly higher, short and soft; stop = lower, slightly longer
+      if(kind === 'start'){
+        o.frequency.setValueAtTime(1200, now); // higher pitch for start
+        g.gain.setValueAtTime(0.0001, now);
+        g.gain.exponentialRampToValueAtTime(0.06, now + 0.012);
+        o.start(now);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+        o.stop(now + 0.19);
+      } else {
+        o.frequency.setValueAtTime(600, now); // lower pitch for stop
+        g.gain.setValueAtTime(0.0001, now);
+        g.gain.exponentialRampToValueAtTime(0.05, now + 0.02);
+        o.start(now);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+        o.stop(now + 0.29);
+      }
+      // close context after short delay to release resources
+      setTimeout(()=>{ try{ ctx.close(); }catch(e){} }, 500);
+    }catch(e){ /* ignore audio errors */ }
+  }
+
   function listenOnce(onResult, onError){
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if(!SpeechRecognition){
-      onError && onError(new Error('SpeechRecognition no soportado'));
+      // Fallback: show keyboard/text input modal
+      appendLog('Info','SpeechRecognition no soportado, usando entrada de teclado');
+      // play activation beep
+      playBeep('start');
+      const modal = document.getElementById('fallbackModal');
+      const input = document.getElementById('fallbackInput');
+      const submit = document.getElementById('fallbackSubmit');
+      const cancel = document.getElementById('fallbackCancel');
+      modal.setAttribute('aria-hidden','false');
+      modal.style.display = 'flex';
+      input.value = '';
+      setTimeout(()=>{ input.focus(); }, 50);
+
+      function cleanup(){
+        modal.setAttribute('aria-hidden','true');
+        modal.style.display = 'none';
+        submit.removeEventListener('click', onSubmit);
+        cancel.removeEventListener('click', onCancel);
+      }
+
+      function onSubmit(){
+        const val = input.value.trim();
+        cleanup();
+        playBeep('stop');
+        if(val.length===0){
+          onError && onError(new Error('No se ingresó texto'));
+        } else {
+          onResult && onResult(val);
+        }
+      }
+      function onCancel(){
+        cleanup();
+        playBeep('stop');
+        onError && onError(new Error('Cancelado por usuario'));
+      }
+
+      submit.addEventListener('click', onSubmit);
+      cancel.addEventListener('click', onCancel);
+      input.addEventListener('keydown', function ke(e){ if(e.key === 'Enter'){ onSubmit(); input.removeEventListener('keydown', ke); } });
       return;
     }
     const recog = new SpeechRecognition();
@@ -124,9 +193,13 @@
     recog.maxAlternatives = 1;
     recog.onresult = (e)=>{
       const text = e.results[0][0].transcript.trim();
+      try{ playBeep('stop'); }catch(e){}
       onResult && onResult(text);
     };
-    recog.onerror = (e)=>{ onError && onError(e); };
+    recog.onerror = (e)=>{ try{ playBeep('stop'); }catch(err){} onError && onError(e); };
+    recog.onend = ()=>{ try{ playBeep('stop'); }catch(e){} };
+    // play activation beep then start recognition
+    try{ playBeep('start'); }catch(e){}
     recog.start();
   }
 
@@ -197,9 +270,10 @@
   }
 
   startBtn.addEventListener('click', ()=>{
-    idx = 0; responses = {}; log.innerHTML = '';
+    // start after the spoken intro question so the intro sentence is only said once
+    idx = 1; responses = {}; log.innerHTML = '';
     // welcome + explain commands (female, agradable)
-    const intro1 = 'Hola. Gracias por participar. Esta entrevista busca entender cómo las personas ciegas interactúan con navegadores web y tecnologías de asistencia. Durará aproximadamente veinte minutos.';
+    const intro1 = 'Hola. Gracias por participar. Esta entrevista busca entender cómo las personas ciegas interactúan con navegadores web y tecnologías de asistencia. Durará aproximadamente 20 minutos. ¿Desea comenzar?';
     const commands = 'Puede utilizar los siguientes comandos por voz: Diga «iniciar entrevista» cuando esté listo para iniciarla. Diga «repetir última pregunta» cuando quiera volver a escuchar la pregunta. Para confirmar una respuesta, cuando le pregunte «¿Es correcto?», responda «correcto», «sí» o «no». Si dice «no», podrá repetir su respuesta.';
     // speak intro and commands with a pleasant female voice and slightly higher pitch
     speak(intro1, ()=>{
