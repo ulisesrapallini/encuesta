@@ -17,12 +17,29 @@
       <button id="skipBtn">Saltar pregunta</button>
     </div>
 
+    <div id="voiceControl" aria-label="Seleccionar voz">
+      <label for="voiceSelect">Seleccionar voz:</label>
+      <select id="voiceSelect" aria-label="Seleccionar voz"></select>
+    </div>
+
     <div id="status" aria-live="polite"></div>
 
     <section id="transcript" aria-label="Transcripción y respuestas">
       <h2>Transcripción</h2>
       <div id="log"></div>
     </section>
+
+    <!-- Fallback input for browsers without SpeechRecognition -->
+    <div id="fallbackModal" role="dialog" aria-modal="true" aria-hidden="true" class="modal">
+      <div class="modal-content">
+        <label id="fallbackLabel" for="fallbackInput">Escriba su respuesta y presione Enviar</label>
+        <input id="fallbackInput" aria-labelledby="fallbackLabel" />
+        <div class="modal-actions">
+          <button id="fallbackSubmit">Enviar</button>
+          <button id="fallbackCancel">Cancelar</button>
+        </div>
+      </div>
+    </div>
   </main>
 
   <script src="app.js"></script>

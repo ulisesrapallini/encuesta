@@ -88,10 +88,12 @@
 
   // preferredVoice will be set once voices are available
   let preferredVoice = null;
+  let availableVoices = [];
 
   function loadVoices(){
     const voices = speechSynthesis.getVoices() || [];
     if(!voices.length) return;
+    availableVoices = voices;
     // stronger heuristics for a pleasant female Spanish voice
     const femalePatterns = [
       /female|femenina|mujer|maria|sofia|soledad|luc[aí]a|isabel|isabela|ana/i,
@@ -107,11 +109,47 @@
     if(!preferredVoice) preferredVoice = voices.find(v => v.lang && v.lang.startsWith('es'));
     // final fallback: first voice available
     if(!preferredVoice && voices.length) preferredVoice = voices[0];
+    // populate voice select UI if present
+    populateVoiceSelect();
   }
 
   // try to load voices now and when they change
   try{ loadVoices(); }catch(e){}
   speechSynthesis.onvoiceschanged = loadVoices;
+
+  function populateVoiceSelect(){
+    const sel = document.getElementById('voiceSelect');
+    if(!sel) return;
+    // Clear existing options
+    sel.innerHTML = '';
+    availableVoices.forEach((v, i)=>{
+      const opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = `${v.name} (${v.lang})`;
+      sel.appendChild(opt);
+    });
+    // try to restore saved choice
+    const saved = localStorage.getItem('preferredVoiceName');
+    let selectedIndex = 0;
+    if(saved){
+      const idx = availableVoices.findIndex(v=>v.name === saved);
+      if(idx >= 0) selectedIndex = idx;
+    } else if(preferredVoice){
+      const idx = availableVoices.findIndex(v=>v.name === preferredVoice.name);
+      if(idx >= 0) selectedIndex = idx;
+    }
+    sel.selectedIndex = selectedIndex;
+    // set preferredVoice accordingly
+    preferredVoice = availableVoices[selectedIndex] || preferredVoice;
+
+    sel.addEventListener('change', ()=>{
+      const idx = parseInt(sel.value, 10);
+      if(!isNaN(idx) && availableVoices[idx]){
+        preferredVoice = availableVoices[idx];
+        try{ localStorage.setItem('preferredVoiceName', preferredVoice.name); }catch(e){}
+      }
+    });
+  }
 
   function speak(text, cb, opts){
     status.textContent = text;
