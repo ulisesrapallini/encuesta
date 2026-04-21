@@ -1,5 +1,8 @@
+
 (function(){
-  const questions = [
+  // questions will be loaded from public/questions.json. a small embedded fallback is kept.
+  let questions = [];
+  const fallbackQuestions = [
     { id: 'intro', text: 'Hola. Gracias por participar. Esta entrevista busca entender cómo las personas ciegas interactúan con navegadores web y tecnologías de asistencia. Durará aproximadamente 20 minutos. ¿Desea comenzar?' },
     { id: 'datos_edad', text: '¿Podría contarnos brevemente su edad aproximada y a qué se dedica actualmente?' },
     { id: 'discapacidad', text: '¿Su discapacidad visual es total o tiene algún grado de visión residual?' },
@@ -69,6 +72,23 @@
     { id: 'cierre', text: 'Muchas gracias por su participación. ¿Desea añadir algún comentario final?' }
   ];
 
+  async function loadQuestions(){
+    try{
+      const res = await fetch('/questions.json', {cache: 'no-store'});
+      if(res.ok){
+        const data = await res.json();
+        if(Array.isArray(data) && data.length>0){
+          questions = data;
+          return;
+        }
+      }
+    }catch(e){
+      console.warn('No se pudo cargar questions.json, usando fallback', e);
+    }
+    questions = fallbackQuestions;
+  }
+
+
   const startBtn = document.getElementById('startBtn');
   const repeatBtn = document.getElementById('repeatBtn');
   const skipBtn = document.getElementById('skipBtn');
@@ -125,6 +145,10 @@
   document.addEventListener('DOMContentLoaded', ()=>{
     populateVoiceSelect();
     populateTTSControls();
+    // load questions file
+    loadQuestions().then(()=>{
+      appendLog('Info','Preguntas cargadas: ' + questions.length);
+    }).catch((e)=>{ appendLog('Error','No se pudieron cargar las preguntas'); });
   });
 
   function populateVoiceSelect(){
