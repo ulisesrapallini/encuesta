@@ -78,6 +78,7 @@
   let idx = 0;
   let responses = {};
   let lastQuestion = null;
+  let paused = false;
 
   function appendLog(label, text){
     const d = document.createElement('div');
@@ -240,6 +241,37 @@
     }catch(e){ /* ignore audio errors */ }
   }
 
+  function pauseInterview(){
+    paused = true;
+    // announce pause and wait for resume command
+    speak('Entrevista pausada. Diga «reanudar entrevista» cuando desee continuar.', ()=>{
+      // listen for resume
+      function waitResume(){
+        listenOnce((res)=>{
+          const txt = (res||'').toLowerCase();
+          if(txt.includes('reanudar') || txt.includes('continuar') || txt.includes('iniciar') || txt.includes('comenzar')){
+            resumeInterview();
+          } else {
+            // keep waiting
+            waitResume();
+          }
+        }, (err)=>{
+          // on error, try again
+          waitResume();
+        });
+      }
+      waitResume();
+    });
+  }
+
+  function resumeInterview(){
+    paused = false;
+    speak('Reanudando la entrevista.', ()=>{
+      // continue with current question
+      setTimeout(askCurrent, 200);
+    });
+  }
+
   function listenOnce(onResult, onError){
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if(!SpeechRecognition){
@@ -310,7 +342,11 @@
     // Ask the question, then listen for answer. Support 'repetir' during answer to replay the question.
     speak(q.text, ()=>{
       listenOnce((answer)=>{
-        const low = answer.toLowerCase();
+        const low = (answer||'').toLowerCase();
+        if(low.includes('pausar')){
+          pauseInterview();
+          return;
+        }
         if(low.includes('repetir')){
           // user asked to repeat the question
           appendLog('Comando', 'Repetir última pregunta');
@@ -323,6 +359,10 @@
         speak('Usted dijo: ' + answer + '. ¿Es correcto?', ()=>{
           listenOnce((conf)=>{
             const c = (conf || '').toLowerCase();
+            if(c.includes('pausar')){
+              pauseInterview();
+              return;
+            }
             if(c.includes('no')){
               // repeat answer
               speak('De acuerdo, repita por favor la respuesta.', ()=>{
@@ -376,10 +416,12 @@
     speak(intro1, ()=>{
       speak(commands, ()=>{
         // ask user to say 'iniciar entrevista' to begin
-        speak('Diga iniciar entrevista cuando esté listo para comenzar.', ()=>{
+        speak('Diga iniciar entrevista cuando esté listo para comenzar. También puede decir pausar entrevista para detenerla temporalmente.', ()=>{
           listenOnce((cmd)=>{
             const c = (cmd||'').toLowerCase();
-            if(c.includes('iniciar')){
+            if(c.includes('pausar')){
+              pauseInterview();
+            } else if(c.includes('iniciar') || c.includes('reanudar') || c.includes('comenzar')){
               speak('Perfecto. Comenzamos ahora.', ()=>{ askCurrent(); });
             } else if(c.includes('repetir')){
               speak('Repito la instrucción. ' + commands, ()=>{ /* then wait once more or start */ askCurrent(); });
