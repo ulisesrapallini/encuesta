@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Encuesta para Personas Ciegas (Voz)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1 id="title">Encuesta por voz</h1>
+    <p id="intro">Presione Enter para comenzar la entrevista. Use auriculares si es posible.</p>
+
+    <div id="controls">
+      <button id="startBtn">Comenzar entrevista</button>
+      <button id="repeatBtn">Repetir última pregunta</button>
+      <button id="skipBtn">Saltar pregunta</button>
+    </div>
+
+    <div id="status" aria-live="polite"></div>
+
+    <section id="transcript" aria-label="Transcripción y respuestas">
+      <h2>Transcripción</h2>
+      <div id="log"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
