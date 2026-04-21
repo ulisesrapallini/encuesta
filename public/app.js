@@ -89,6 +89,9 @@
   // preferredVoice will be set once voices are available
   let preferredVoice = null;
   let availableVoices = [];
+  // TTS settings (can be adjusted from UI)
+  let ttsRate = 0.95;
+  let ttsPitch = 1.12;
 
   function loadVoices(){
     const voices = speechSynthesis.getVoices() || [];
@@ -116,6 +119,12 @@
   // try to load voices now and when they change
   try{ loadVoices(); }catch(e){}
   speechSynthesis.onvoiceschanged = loadVoices;
+
+  // populate controls when DOM ready
+  document.addEventListener('DOMContentLoaded', ()=>{
+    populateVoiceSelect();
+    populateTTSControls();
+  });
 
   function populateVoiceSelect(){
     const sel = document.getElementById('voiceSelect');
@@ -151,13 +160,44 @@
     });
   }
 
+  function populateTTSControls(){
+    const rateRange = document.getElementById('rateRange');
+    const pitchRange = document.getElementById('pitchRange');
+    const rateValue = document.getElementById('rateValue');
+    const pitchValue = document.getElementById('pitchValue');
+    if(!rateRange || !pitchRange) return;
+    // restore saved
+    try{
+      const savedRate = parseFloat(localStorage.getItem('ttsRate'));
+      const savedPitch = parseFloat(localStorage.getItem('ttsPitch'));
+      if(!isNaN(savedRate)) ttsRate = savedRate;
+      if(!isNaN(savedPitch)) ttsPitch = savedPitch;
+    }catch(e){}
+    rateRange.value = ttsRate;
+    pitchRange.value = ttsPitch;
+    rateValue.textContent = ttsRate;
+    pitchValue.textContent = ttsPitch;
+
+    rateRange.addEventListener('input', ()=>{
+      ttsRate = parseFloat(rateRange.value);
+      rateValue.textContent = ttsRate.toFixed(2);
+      try{ localStorage.setItem('ttsRate', String(ttsRate)); }catch(e){}
+    });
+    pitchRange.addEventListener('input', ()=>{
+      ttsPitch = parseFloat(pitchRange.value);
+      pitchValue.textContent = ttsPitch.toFixed(2);
+      try{ localStorage.setItem('ttsPitch', String(ttsPitch)); }catch(e){}
+    });
+  }
+
   function speak(text, cb, opts){
     status.textContent = text;
     const ut = new SpeechSynthesisUtterance(text);
     // prefer a clear, slightly slower and warm female voice
     ut.lang = (opts && opts.lang) || 'es-ES';
-    ut.rate = (opts && opts.rate) || 0.95;
-    ut.pitch = (opts && opts.pitch) || 1.12;
+    // allow UI-controlled rate/pitch to override defaults
+    ut.rate = (opts && opts.rate) || ttsRate || 0.95;
+    ut.pitch = (opts && opts.pitch) || ttsPitch || 1.12;
     // use locked preferredVoice if available, otherwise try to select one now
     if(preferredVoice) ut.voice = preferredVoice;
     else {
