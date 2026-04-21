@@ -86,28 +86,47 @@
     log.scrollTop = log.scrollHeight;
   }
 
-  function selectSpanishFemaleVoice(){
-    const voices = speechSynthesis.getVoices();
-    if(!voices || voices.length === 0) return null;
-    // prefer Spanish female-like voices by heuristics, fallback to first Spanish voice
-    const femaleHint = /female|femenina|maria|sofia|soledad|luc[aí]a|isabel|isabela|google español|spanish m/i;
-    let v = voices.find(v=>v.lang && v.lang.startsWith('es') && femaleHint.test(v.name));
-    if(!v) v = voices.find(v=>v.lang && v.lang.startsWith('es'));
-    if(!v) v = voices[0];
-    return v;
+  // preferredVoice will be set once voices are available
+  let preferredVoice = null;
+
+  function loadVoices(){
+    const voices = speechSynthesis.getVoices() || [];
+    if(!voices.length) return;
+    // stronger heuristics for a pleasant female Spanish voice
+    const femalePatterns = [
+      /female|femenina|mujer|maria|sofia|soledad|luc[aí]a|isabel|isabela|ana/i,
+      /google.*es|español.*google|spanish.*google/i,
+      /spanish.*female|es-.*female/i
+    ];
+    // prefer same-language Spanish voices (es-*) and matching female hints
+    preferredVoice = voices.find(v => {
+      if(!v.lang || !v.lang.startsWith('es')) return false;
+      return femalePatterns.some(rx => rx.test(v.name || ''));
+    });
+    // fallback: any Spanish voice
+    if(!preferredVoice) preferredVoice = voices.find(v => v.lang && v.lang.startsWith('es'));
+    // final fallback: first voice available
+    if(!preferredVoice && voices.length) preferredVoice = voices[0];
   }
+
+  // try to load voices now and when they change
+  try{ loadVoices(); }catch(e){}
+  speechSynthesis.onvoiceschanged = loadVoices;
 
   function speak(text, cb, opts){
     status.textContent = text;
     const ut = new SpeechSynthesisUtterance(text);
-    ut.lang = (opts && opts.lang) || 'es-AR';
-    ut.rate = (opts && opts.rate) || 1.0;
-    ut.pitch = (opts && opts.pitch) || 1.05;
-    // try to pick a Spanish female voice when available
-    const voice = selectSpanishFemaleVoice();
-    if(voice) ut.voice = voice;
+    // prefer a clear, slightly slower and warm female voice
+    ut.lang = (opts && opts.lang) || 'es-ES';
+    ut.rate = (opts && opts.rate) || 0.95;
+    ut.pitch = (opts && opts.pitch) || 1.12;
+    // use locked preferredVoice if available, otherwise try to select one now
+    if(preferredVoice) ut.voice = preferredVoice;
+    else {
+      try{ loadVoices(); }catch(e){}
+      if(preferredVoice) ut.voice = preferredVoice;
+    }
     ut.onend = () => { if(cb) cb(); };
-    // ensure voices are loaded (some browsers require getVoices to be called earlier)
     try{ speechSynthesis.cancel(); }catch(e){}
     speechSynthesis.speak(ut);
   }
